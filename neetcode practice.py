@@ -30,26 +30,16 @@ else:
     
 #two-sum
 class Solution1:
-    def twoSum(self, nums: list[int], target: int) -> list[int]:
-        listI = [0] * max(nums)
-        for i in range(len(nums)):
-            listI[nums[i]-1] += 1
+    def twoSum(self, nums: list[int], target: int) -> list[int]:    
+        my_dict = {}
+        num_output = []
+        for i in range (len(nums)):
+            if target-nums[i] in my_dict:
+               num_output.append(my_dict.get(target-nums[i]))
+               num_output.append(i)
 
-        listF = []
-        for j in range(len(nums)):
-
-            if target > nums[j]:
-                listF.append(j)
-
-                goal = target - nums[j] 
-
-                if listI[goal-1] != 0:
-
-                    listF.append(nums.index(goal))
-                
-                if len(listF) ==2:
-                    return listF
-
+            my_dict [nums[i]] = i
+        return num_output
 
 
 user = input('Enter an array of integers with : ')
