@@ -7,6 +7,8 @@ Created on Sat Oct 10 22:50:44 2026
 
 #valid anagram
 from collections import Counter
+from collections import defaultdict
+from typing import List
 
 class Solution:
     def isAnagram (self, s:str, t:str) -> bool:
@@ -40,7 +42,7 @@ class Solution1:
 
             my_dict [nums[i]] = i
         return num_output
-
+# reflection, my code was correct! I was just populating the dictionary before I checked it!
 
 user = input('Enter an array of integers with : ')
 user_target = int(input('Enter your target: '))
@@ -48,3 +50,23 @@ user_list = [int(num) for num in user.split()]
 
 two_sum = Solution1()
 print(two_sum.twoSum(user_list, user_target))
+
+#group_anagrams
+
+
+class Solution:
+    def groupAnagrams(self, strs: List[str]) -> List[List[str]]:
+        groups = defaultdict(list)
+
+        #holds the frequency for each word, can use counter but counter is o(n)
+        for word in strs:
+            counts = [0] *26
+            #goes through every char in a word, find its index thro calculations andincrements the position the word is found at
+            for char in word:
+                index = ord(char) - ord("a")
+                counts[index] +=1 
+            #uses the freq array as a key to locate the word, rather than going through each word or comparing every word  "2, 1, 0" = word
+            groups[tuple(counts)].append(word)
+
+
+        return list(groups.values())
