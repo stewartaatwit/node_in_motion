@@ -54,7 +54,7 @@ print(two_sum.twoSum(user_list, user_target))
 #group_anagrams
 
 
-class Solution:
+class Solution2:
     def groupAnagrams(self, strs: List[str]) -> List[List[str]]:
         groups = defaultdict(list)
 
@@ -70,3 +70,33 @@ class Solution:
 
 
         return list(groups.values())
+    
+class Solution3:
+    def containsDuplicate(self, nums:list[int])-> bool:
+        seen= {}
+        count =0
+        for num in nums:
+            if not num in seen:
+               seen[num]= count + 1
+            else:
+               return True
+          
+        return False
+
+class Solution4:
+    def topKFrequent(self, nums:List[int], k:int)-> List[int]:
+        length = len(nums) 
+        max_num = max(nums)
+        arr = [0]* (max_num +1)
+        output= []
+        for i in range(length):
+            arr[nums[i]]+=1
+            
+        for i in range(len(arr)):
+            if arr[i] >= k :
+                output.append(i)
+                
+        return output
+            
+    
+
