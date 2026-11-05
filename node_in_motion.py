@@ -1,0 +1,169 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Nov  4 00:12:39 2026
+
+@author: stewarta6
+"""
+
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Oct  5 10:23:18 2026
+
+@author: ataly
+"""
+
+import socket
+import threading
+import json
+import time
+import uuid
+import random
+DEFAULT_PORT = 50505
+MAX_HOPS = 50
+
+NODE_ID = random.randint(0,65535)
+MY_NAME = input("Your unique name (example Salem-O): ").strip()
+MY_STAMP = input("Your one-word stamp: ").strip()
+MY_PORT = int(input(f"Your listening port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
+NEXT_IP = input("Next student's IP address: ").strip()
+NEXT_PORT = int(input(f"Next student's port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
+
+
+ready_event = threading.Event()
+
+def receive_json(conn):
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = conn.recv(1024)
+        if not chunk:
+            break
+        data += chunk
+        if len(data) > 65536:
+            raise ValueError("Token is too large")
+
+    if not data:
+        return None
+
+    return json.loads(data.decode("utf-8").strip())
+
+def send_token(token):
+    if token["ttl"] <= 0:
+        print("STOPPED: TTL reached zero. The ring may be configured incorrectly.")
+        return
+
+    token["hops"] += 1
+    token["ttl"] -= 1
+    payload = (json.dumps(token) + "\n").encode("utf-8")
+
+    for attempt in range(1, 6):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                client.settimeout(4)
+
+                # TODO 1: Connect to NEXT_IP and NEXT_PORT.
+                client.connect((NEXT_IP, NEXT_PORT))
+                
+                # TODO 2: Send the entire payload.
+                client.sendall(payload)
+
+            print(f"FORWARDED to {NEXT_IP}:{NEXT_PORT}")
+            return
+
+        except OSError as error:
+            print(f"Attempt {attempt}/5 failed: {error}")
+            time.sleep(2)
+
+    print("BROKEN LINK: Could not reach the next student after 5 attempts.")
+
+def process_token(token):
+    print("\nTOKEN RECEIVED")
+    print("Message:", token["message"])
+    print("Route so far:", " -> ".join(token["path"]))
+
+    # Is this MY token returning home?
+    if token["origin"] == MY_NAME and token["hops"] > 0:
+        token["path"].append(MY_NAME)
+        elapsed = time.time() - token["started_at"]
+
+        print("\n*** TOKEN MADE IT HOME! ***")
+        print("Message:", token["message"])
+        print("Route:", " -> ".join(token["path"]))
+        print("Stamps:", " | ".join(token["stamps"]))
+        print("Hops:", token["hops"])
+        print("Lap time:", round(elapsed, 2), "seconds")
+        return
+
+    # Safety check: a non-origin node should not appear twice.
+    if MY_NAME in token["path"]:
+        print("LOOP DETECTED: This node was visited already. Token stopped.")
+        return
+
+    # TODO 3: Append MY_NAME to token["path"].
+    token["path"].append(MY_NAME)
+    
+    # TODO 4: Append MY_STAMP to token["stamps"].
+    token["stamps"].append(MY_STAMP)
+    
+    print("Updated route:", " -> ".join(token["path"]))
+    send_token(token)
+
+def listen_forever():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        # TODO 5: Bind to ("0.0.0.0", MY_PORT).
+        server.bind(("0.0.0.0", MY_PORT))
+        
+        # TODO 6: Put the socket into listening mode.
+        server.listen(30)
+        print(f"READY: {MY_NAME} is listening on port {MY_PORT}")
+        ready_event.set()
+
+        while True:
+            # TODO 7: Accept an incoming connection.
+            conn, addr = server.accept();
+            # Store the connected socket in conn and the address in addr.
+
+            with conn:
+                try:
+                    token = receive_json(conn)
+                    if token is not None:
+                        process_token(token)
+                except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
+                    print("Bad token received:", error)
+
+def create_new_token(message):
+    return {
+        "token_id": uuid.uuid4().hex[:8],
+        "origin": MY_NAME,
+        "message": message,
+        "path": [MY_NAME],
+        "stamps": [MY_STAMP],
+        "hops": 0,
+        "ttl": MAX_HOPS,
+        "started_at": time.time()
+    }
+
+listener = threading.Thread(target=listen_forever, daemon=True)
+listener.start()
+ready_event.wait()
+
+print("\nYour node is ready.")
+print("Do not send until the instructor says GO.")
+
+while True:
+    command = input("\nType SEND to start a token, or QUIT: ").strip().upper()
+
+    if command == "SEND":
+        message = input("Message to send around the ring: ").strip()
+        if message:
+            send_token(create_new_token(message))
+        else:
+            print("Message cannot be empty.")
+
+    elif command == "QUIT":
+        print("Closing node.")
+        break
+
+    else:
+        print("Please type SEND or QUIT.")
