@@ -20,6 +20,10 @@ import uuid
 DEFAULT_PORT = 50505
 MAX_HOPS = 50
 
+#UDP heartbeat settings
+HEARTBEAT_INTERVAL = 5 #send a heartbeat every 5 seconds 
+HEARTBEAT_TIMEOUT = 15 #Mark a neighbor dead after 15 seconds
+
 #unique ID
 NODE_ID = str(uuid.uuid4())
 MY_NAME = input("Your unique name (example Salem-O): ").strip()
@@ -30,17 +34,21 @@ MY_PORT = int(input(f"Your listening port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
 NUM_NEIGHBORS = int (input("How many neighbors do you have: "))
 neighbors = {}
 
+# A lock protects neighbor information shared between threads.
+neighbors_lock = threading.Lock()
+
 #populating a dictionary  with ip address, whether it is alive or not, and if its still alive
 for i in range(NUM_NEIGHBORS):
     ip = input(f"Enter neighbor {i + 1} IP address: ")
-    neighbors[f"Neighbor {i+1}"]= {}
-    neighbors[f"Neighbor {i+1}"]["ip_addr"]= ip
-    neighbors[f"Neighbor {i+1}"]["status"]= "unknown"
-    neighbors[f"Neighbor {i+1}"]["last_seen"]= None
-
-
+    port = int(input(f"Enter neighbor {i + 1} port: "))
     
-    
+    neighbors[f"Neighbor {i+1}"]= {
+        "ip_addr": ip,
+        "port": port,
+        "status": "unknown",
+        "last_seen": None
+        }
+      
     #how much neighbors do we have
 print(f"Your node has {NUM_NEIGHBORS} neighbors")
 
@@ -71,16 +79,79 @@ for n in neighbors:
 ready_event = threading.Event()
 
 def listen_for_heartbeats():
-    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_sock.bind(("0.0.0.0", MY_PORT))
-    #gets the data and the senders ip addr
-    data, addr = udp_sock.recvfrom(1024)
-    
-    sender_ip= addr[0]
-    if sender_ip in neighbors:
-        neighbors[sender_ip]["status"]= "alive"
-        neighbors[sender_ip]["last_seen"] = time.time()
-        print(f"Heartbeat received from {sender_ip}")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:   
+     udp_sock.bind(("0.0.0.0", MY_PORT))
+     print(f"UDP HEARTBEAT: Listening on port {MY_PORT}")
+     
+     while True:
+         try:
+             # Receive heartbeat data and the sender's address.
+               data, addr = udp_sock.recvfrom(1024)
+      
+               sender_ip= addr[0]
+               # Convert the received bytes into a string.
+               message = data.decode("utf-8").strip()
+
+               # Expected format: HEARTBEAT|NodeName|Timestamp
+               parts = message.split("|")
+
+               if len(parts) != 3 or parts[0] != "HEARTBEAT":
+                  continue
+
+               sender_name = parts[1]
+
+               # Find the neighbor that sent the heartbeat.
+               with neighbors_lock:
+
+                    for name, info in neighbors.items():
+
+                        if info["ip_addr"] == sender_ip:
+
+                            # Update the neighbor's status and timestamp.
+                            info["status"] = "alive"
+                            info["last_seen"] = time.time()
+
+                            print(
+                                f"Heartbeat received from "
+                                f"{sender_name} ({sender_ip})"
+                            )
+
+                            break
+
+         except (OSError, UnicodeDecodeError) as error:
+            print("Heartbeat receiving error:", error)
+            
+def send_heartbeats():
+    """Send UDP heartbeat messages to all configured neighbors."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:
+        while True:
+
+     # Create a heartbeat message with our name and timestamp.
+            message = (
+               f"HEARTBEAT|{MY_NAME}|{time.time()}"
+           ).encode("utf-8")
+
+           # Make a safe copy of the neighbor information.
+            with neighbors_lock:
+               neighbor_list = list(neighbors.items())
+
+           # Send the heartbeat to every neighbor.
+            for name, info in neighbor_list:
+
+               try:
+                   destination = (
+                       info["ip_addr"],
+                       info["port"]
+                   )
+
+                   udp_sock.sendto(message, destination)
+
+               except OSError as error:
+                   print(f"Could not send heartbeat to {name}: {error}")
+
+           # Wait before sending the next heartbeat.
+            time.sleep(HEARTBEAT_INTERVAL)
     
 
 def receive_json(conn):
