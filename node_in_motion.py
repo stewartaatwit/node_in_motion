@@ -54,7 +54,7 @@ node = {
       "node_port" : MY_PORT,
       "neighbors" : neighbors
       }
-NEXT_PORT = int(input(f"Next student's port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
+NEXT_PORT = int(input(f"Next students port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
 
 
 print("=====NODE INFORMATION=====" )
@@ -69,6 +69,19 @@ for n in neighbors:
 
 
 ready_event = threading.Event()
+
+def listen_for_heartbeats():
+    udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_sock.bind(("0.0.0.0", MY_PORT))
+    #gets the data and the senders ip addr
+    data, addr = udp_sock.recvfrom(1024)
+    
+    sender_ip= addr[0]
+    if sender_ip in neighbors:
+        neighbors[sender_ip]["status"]= "alive"
+        neighbors[sender_ip]["last_seen"] = time.time()
+        print(f"Heartbeat received from {sender_ip}")
+    
 
 def receive_json(conn):
     data = b""
@@ -109,8 +122,7 @@ def send_token(token):
             return
 
         except OSError as error:
-            print(f"Attempt {attempt}/5 failed: {error}")
-            time.sleep(2)
+            print(f"Attempt {attempt}/5 failed: {error}")            time.sleep(2)
 
     print("BROKEN LINK: Could not reach the next student after 5 attempts.")
 
