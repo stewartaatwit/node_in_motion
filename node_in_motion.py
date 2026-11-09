@@ -17,16 +17,55 @@ import threading
 import json
 import time
 import uuid
-import random
 DEFAULT_PORT = 50505
 MAX_HOPS = 50
 
-NODE_ID = random.randint(0,65535)
+#unique ID
+NODE_ID = str(uuid.uuid4())
 MY_NAME = input("Your unique name (example Salem-O): ").strip()
 MY_STAMP = input("Your one-word stamp: ").strip()
 MY_PORT = int(input(f"Your listening port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
-NEXT_IP = input("Next student's IP address: ").strip()
+
+#collecting your neighbors
+NUM_NEIGHBORS = int (input("How many neighbors do you have: "))
+neighbors = {}
+
+#populating a dictionary  with ip address, whether it is alive or not, and if its still alive
+for i in range(NUM_NEIGHBORS):
+    ip = input(f"Enter neighbor {i + 1} IP address: ")
+    neighbors[f"Neighbor {i+1}"]= {}
+    neighbors[f"Neighbor {i+1}"]["ip_addr"]= ip
+    neighbors[f"Neighbor {i+1}"]["status"]= "unknown"
+    neighbors[f"Neighbor {i+1}"]["last_seen"]= None
+
+
+    
+    
+    #how much neighbors do we have
+print(f"Your node has {NUM_NEIGHBORS} neighbors")
+
+#debugging tool
+#for i in range(len(neighbors)):
+ #   print(f"Neighbor{i+1}: {neighbors[i]}")
+    
+
+node = {
+      "node_id" : NODE_ID,
+      "node_port" : MY_PORT,
+      "neighbors" : neighbors
+      }
 NEXT_PORT = int(input(f"Next student's port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
+
+
+print("=====NODE INFORMATION=====" )
+print(f"Node ID: {node['node_id']}")
+
+print(f"Number of neighbors: {NUM_NEIGHBORS}")
+i=1
+for n in neighbors:
+    print(f"Neighbor {i}: {n}")
+    i=i+1
+
 
 
 ready_event = threading.Event()
