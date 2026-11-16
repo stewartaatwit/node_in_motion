@@ -62,7 +62,40 @@ node = {
       "node_port" : MY_PORT,
       "neighbors" : neighbors
       }
+# Get the primary next students IP and port
+NEXT_IP= input("ext student's IP address: ").strip()
 NEXT_PORT = int(input(f"Next students port [{DEFAULT_PORT}]: ") or DEFAULT_PORT)
+
+# Routing Table Initialization
+
+# Stores all possible routes to neighboring nodes.
+routing_table = {}
+
+# A lock protects routing table information shared between threads.
+routing_table_lock = threading.Lock()
+
+# Add every configured neighbor as a possible route.
+for name, info in neighbors.items():
+
+    routing_table[name] = {
+        "ip_addr": info["ip_addr"],
+        "port": info["port"],
+        "status": "unknown",
+        "last_seen": None,
+        "is_primary": (
+            info["ip_addr"] == NEXT_IP
+            and info["port"] == NEXT_PORT
+        )
+    }
+
+print("\n===== ROUTING TABLE =====")
+
+for name, route in routing_table.items():
+    print(
+        f"{name}: {route['ip_addr']}:{route['port']} | "
+        f"Status: {route['status']} | "
+        f"Primary: {route['is_primary']}"
+    )
 
 
 print("=====NODE INFORMATION=====" )
@@ -74,9 +107,9 @@ for n in neighbors:
     print(f"Neighbor {i}: {n}")
     i=i+1
 
-
-
 ready_event = threading.Event()
+
+# UDP Heartbeat Functions
 
 def listen_for_heartbeats():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_sock:   
@@ -166,6 +199,59 @@ def monitor_neighbors():
                     print(f"{name} is now unavailable")
         time.sleep(2)
         
+    #filtering method to find alive nodes
+def active_neighbors():
+    active_neighbors= {}
+    with neighbors_lock:
+        for n, status in neighbors.items():
+            if status["status"]== "alive":
+                active_neighbors[n]=status
+    return active_neighbors
+
+# Routing Funtions 
+def get_next_hop():
+    """Choose the primary neighbor first, then an available neighbor."""
+
+    with routing_table_lock:
+
+        routes = list(routing_table.items())
+
+        # Find the primary neighbor.
+        primary = [
+            (name, info) for name, info in routes
+            if info["is_primary"]
+        ]
+
+        # Find other neighbors that are alive.
+        backups = [
+            (name, info) for name, info in routes
+            if info["status"] == "alive"
+            and not info["is_primary"]
+        ]
+
+        # Try the primary unless it is known to be unavailable.
+        if primary and primary[0][1]["status"] != "unavailable":
+            return primary[0]
+
+        # Otherwise, choose an available backup.
+        if backups:
+            return backups[0]
+
+        return None
+
+
+def mark_neighbor_unavailable(name):
+    """Update both dictionaries when a neighbor fails."""
+
+    with neighbors_lock:
+        if name in neighbors:
+            neighbors[name]["status"] = "unavailable"
+
+    with routing_table_lock:
+        if name in routing_table:
+            routing_table[name]["status"] = "unavailable"
+
+# TOKEN RECEIVING AND SENDING FUNCTIONS
 def receive_json(conn):
     data = b""
     while not data.endswith(b"\n"):
@@ -190,26 +276,65 @@ def send_token(token):
     token["ttl"] -= 1
     payload = (json.dumps(token) + "\n").encode("utf-8")
 
-    for attempt in range(1, 6):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
-                client.settimeout(4)
-
-                # TODO 1: Connect to NEXT_IP and NEXT_PORT.
-                client.connect((NEXT_IP, NEXT_PORT))
-                
-                # TODO 2: Send the entire payload.
-                client.sendall(payload)
-
-            print(f"FORWARDED to {NEXT_IP}:{NEXT_PORT}")
-            return
-
-        except OSError as error:
-            print(f"Attempt {attempt}/5 failed: {error}")           
-            time.sleep(2)
-
-    print("BROKEN LINK: Could not reach the next student after 5 attempts.")
-
+    # Get the next available neighbor
+    next_hop = get_next_hop()
+    
+    if next_hop is None:
+        print("REROUTING FAILED: No available neighbors.")
+        return
+    
+        # Create a list of possible routes.
+        with routing_table_lock:
+    
+            routes = list(routing_table.items())
+    
+            # Start with the selected route.
+            candidates = [next_hop]
+    
+            # Add all other alive neighbors as backup routes.
+            for name, info in routes:
+    
+                if (
+                    name != next_hop[0]
+                    and info["status"] == "alive"
+                ):
+                    candidates.append((name, info))
+    
+    # Try each available neighbor.
+    for name, info in candidates:
+    
+        for attempt in range(1, 6):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                    client.settimeout(4)
+    
+                    # TODO 1: Connect to NEXT_IP and NEXT_PORT.
+                    client.connect((NEXT_IP, NEXT_PORT))
+                    
+                    # TODO 2: Send the entire payload.
+                    client.sendall(payload)
+                    
+                if name == next_hop[0]:
+                    print(f"FORWARDED to {name}")
+                else:
+                    print(f"REROUTED successfully to {name}")
+    
+                print(f"FORWARDED to {NEXT_IP}:{NEXT_PORT}")
+                return
+    
+            except OSError as error:
+                print(f"Attempt {attempt}/5 failed: {error}")           
+                time.sleep(2)
+    
+        print("BROKEN LINK: Could not reach the next student after 5 attempts.")
+    
+     # Mark the failed neighbor unavailable.
+        mark_neighbor_unavailable(name)
+       
+        print(f"{name} is unavailable. Searching for another route...")
+       
+    print("BROKEN LINK: No available routes found.")
+    
 def process_token(token):
     print("\nTOKEN RECEIVED")
     print("Message:", token["message"])
