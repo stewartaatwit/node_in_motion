@@ -48,7 +48,8 @@ for i in range(NUM_NEIGHBORS):
         "ip_addr": ip,
         "port": port,
         "status": "unknown",
-        "last_seen": None
+        "last_seen": None,
+        "destinations" : []
         }
       
     #how much neighbors do we have
@@ -93,7 +94,8 @@ for name, info in neighbors.items():
         "is_primary": (
             info["ip_addr"] == NEXT_IP
             and info["port"] == NEXT_PORT
-        )
+        ),
+        "destinations": info["destinations"]
     }
 
 print("\n===== ROUTING TABLE =====")
@@ -147,14 +149,14 @@ def listen_for_heartbeats():
                    continue
                
                mark_neighbor_available(sender_name)
-               print("LAST SEEN:", neighbors[sender_name]["last_seen"])
-               print("STATUS:", neighbors[sender_name]["status"])
-               print(f"{sender_name} is alive")
-               print(
-                   f"Heartbeat received from "
-                   f"{sender_name} ({sender_ip})"
+            #   print("LAST SEEN:", neighbors[sender_name]["last_seen"])
+             #  print("STATUS:", neighbors[sender_name]["status"])
+              # print(f"{sender_name} is alive")
+               #print(
+                 # f"Heartbeat received from "
+                  # f"{sender_name} ({sender_ip})"
                    
-                )
+                #)
                
                             
 
@@ -237,37 +239,44 @@ def promote_backup():
 
         print("No available backup neighbors.")
 # Routing Funtions 
-def get_next_hop():
+def get_next_hop(destination, attempted_neighbors=None):
     """Choose the primary neighbor first, then an available neighbor."""
+    if attempted_neighbors is None:
+        attempted_neighbors = set()
 
     with routing_table_lock:
 
         routes = list(routing_table.items())
 
-        # Find the primary neighbor.
-        primary = [
+        # Find neighbors that are alive, can reach the destination,
+        # and have not already been attempted.
+        valid_routes = [
             (name, info) for name, info in routes
+            if destination in info["destinations"]
+            and info["status"] == "alive"
+            and name not in attempted_neighbors
+        ]
+
+        # Prefer the primary neighbor.
+        primary = [
+            (name, info) for name, info in valid_routes
             if info["is_primary"]
         ]
 
-        # Find other neighbors that are alive.
-        backups = [
-            (name, info) for name, info in routes
-            if info["status"] == "alive"
-            and not info["is_primary"]
-        ]
-
-        # Try the primary unless it is known to be unavailable.
-        if primary and primary[0][1]["status"] != "unavailable":
+        if primary:
             return primary[0]
 
-        # Otherwise, choose an available backup.
+        # Otherwise, choose a valid backup.
+        backups = [
+            (name, info) for name, info in valid_routes
+            if not info["is_primary"]
+        ]
+
         if backups:
             return backups[0]
 
         return None
-
-    
+  
 def mark_neighbor_unavailable(name):
     """Update both dictionaries when a neighbor fails."""
 
@@ -297,17 +306,24 @@ def mark_neighbor_unavailable(name):
 
 #update both dictionaries for when a node is alive
 def mark_neighbor_available(name):
-    
-    with neighbors_lock:
-        
-        if name in neighbors:
-                neighbors[name]["status"] = "alive"
-                neighbors[name]["last_seen"]= time.time()
-    with routing_table_lock:
-        if name in routing_table:
-                routing_table[name]["status"]= "alive"
-                routing_table[name]["last_seen"]= time.time()
-                
+   with neighbors_lock:
+        if name not in neighbors:
+            return
+
+        previous_status = neighbors[name]["status"]
+
+        neighbors[name]["status"] = "alive"
+        neighbors[name]["last_seen"] = time.time()
+
+        if previous_status != "alive":
+            print(f"{name} is alive")
+
+   with routing_table_lock:
+       
+       if name in routing_table:
+           routing_table[name]["status"] = "alive"
+           routing_table[name]["last_seen"] = time.time()
+            
 # TOKEN RECEIVING AND SENDING FUNCTIONS
 def receive_json(conn):
     data = b""
@@ -324,94 +340,71 @@ def receive_json(conn):
 
     return json.loads(data.decode("utf-8").strip())
 
-def send_token(token):
+def send_token(token, attempted_neighbors=None):
+
+    if attempted_neighbors is None:
+        attempted_neighbors = set()
+
     if token["ttl"] <= 0:
-        print("STOPPED: TTL reached zero. The ring may be configured incorrectly.")
+        print("STOPPED: TTL reached zero.")
         return
 
+    next_hop = get_next_hop(
+        token["destination"],
+        attempted_neighbors
+    )
+
+    if next_hop is None:
+        print("REROUTING FAILED: No more valid routes.")
+        return
+
+    name, info = next_hop
+
+    # Prepare token for forwarding.
     token["hops"] += 1
     token["ttl"] -= 1
+
     payload = (json.dumps(token) + "\n").encode("utf-8")
 
-    # Get the next available neighbor
-    next_hop = get_next_hop()
-    
-    if next_hop is None:
-        print("REROUTING FAILED: No available neighbors.")
-        return
-    
-        # Create a list of possible routes.
-    with routing_table_lock:
-    
-        routes = list(routing_table.items())
-    
-            # Start with the selected route.
-        candidates = [next_hop]
-    
-            # Add all other alive neighbors as backup routes.
-        for name, info in routes:
-            
-            if (
-                name != next_hop[0]
-                and info["status"] == "alive"
-               
-            ):
-                candidates.append((name, info))
-    
-    # Try each available neighbor.
-    for name, info in candidates:
-    
-        for attempt in range(1, 6):
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
-                    client.settimeout(4)
-    
-                    # TODO 1: Connect to an available neighbor.
-                    client.connect((info["ip_addr"], info["port"]))
-                    
-                    # TODO 2: Send the entire payload.
-                    client.sendall(payload)
-                    
-                if name == next_hop[0]:
-                    print(f"FORWARDED to {name}")
-                else:
-                    print(f"REROUTED successfully to {name}")
-    
-               # print(f"FORWARDED to {NEXT_IP}:{NEXT_PORT}")
-                return
-    
-            except OSError as error:
-                print(f"Attempt {attempt}/5 failed: {error}")           
-                time.sleep(2)
-    
-        print("BROKEN LINK: Could not reach the next student after 5 attempts.")
-    
-     # Mark the failed neighbor unavailable.
-      #Commented out for now becauise a failed TCP connection does not necessarily
-      # mean that the node is deadmark_neighbor_unavailable(name)
-       
-        print("Searching for another route...")
-       
-    print("BROKEN LINK: No available routes found.")
-    
-def process_token(token):
+    # Try connecting to the selected neighbor.
+    for attempt in range(1, 6):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                client.settimeout(4)
+                client.connect((info["ip_addr"], info["port"]))
+                client.sendall(payload)
+
+            print(f"FORWARDED to {name}")
+            return
+
+        except OSError as error:
+            print(f"Attempt {attempt}/5 failed: {error}")
+            time.sleep(2)
+
+    print(f"BROKEN LINK: Could not reach {name}.")
+
+    # Remember that this neighbor failed.
+    attempted_neighbors.add(name)
+
+    print("Searching for another valid route...")
+
+    # Try another neighbor.
+    send_token(token, attempted_neighbors)
+     
+def process_token(token):    
     print("\nTOKEN RECEIVED")
     print("Message:", token["message"])
     print("Route so far:", " -> ".join(token["path"]))
+    
+    # CHeck if this node is the destination
+    if token["destination"] == MY_NAME:
+       print("\n*** DESTINATION REACHED! ***")
+       print("Message:", token["message"])
+       print("Route:", " -> ".join(token["path"]))
+       print("File/message successfully delivered!")
+       return
 
-    # Is this MY token returning home?
-    if token["origin"] == MY_NAME and token["hops"] > 0:
-        token["path"].append(MY_NAME)
-        elapsed = time.time() - token["started_at"]
-
-        print("\n*** TOKEN MADE IT HOME! ***")
-        print("Message:", token["message"])
-        print("Route:", " -> ".join(token["path"]))
-        print("Stamps:", " | ".join(token["stamps"]))
-        print("Hops:", token["hops"])
-        print("Lap time:", round(elapsed, 2), "seconds")
-        return
-
+ 
     # Safety check: a non-origin node should not appear twice.
     if MY_NAME in token["path"]:
         print("LOOP DETECTED: This node was visited already. Token stopped.")
@@ -451,11 +444,12 @@ def listen_forever():
                 except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
                     print("Bad token received:", error)
 
-def create_new_token(message):
+def create_new_token(message, destination):
     return {
         "token_id": uuid.uuid4().hex[:8],
         "origin": MY_NAME,
         "message": message,
+        "destination": destination,
         "path": [MY_NAME],
         "stamps": [MY_STAMP],
         "hops": 0,
@@ -490,11 +484,13 @@ while True:
     command = input("\nType SEND to start a token, or QUIT: ").strip().upper()
 
     if command == "SEND":
-        message = input("Message to send around the ring: ").strip()
-        if message:
-            send_token(create_new_token(message))
+        message = input("Message to send: ").strip()
+        destination = input("Enter destination node: ").strip()
+        
+        if message and destination:
+            send_token(create_new_token(message,destination))
         else:
-            print("Message cannot be empty.")
+            print("Message and destination cannot be empty.")
 
     elif command == "QUIT":
         print("Closing node.")
