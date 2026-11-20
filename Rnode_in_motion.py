@@ -58,7 +58,8 @@ print(neighbors)
 #debugging tool
 #for i in range(len(neighbors)):
  #   print(f"Neighbor{i+1}: {neighbors[i]}")
-    
+NEXT_IP =None
+NEXT_PORT=None
 
 node = {
       "node_id" : NODE_ID,
@@ -71,8 +72,11 @@ PRIMARY = input("Primary node:")
 with neighbors_lock:
     for n in neighbors.values():
         if n["name"] == PRIMARY:
-            NEXT_IP= n["ip_addr"]
-            NEXT_PORT = n["port"]
+           NEXT_IP= ["ip_addr"]
+           NEXT_PORT = n["port"]
+           
+if NEXT_IP is None:
+    raise ValueError("Primary neighbor not found!")
 
 
 # Routing Table Initialization
